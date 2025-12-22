@@ -1,0 +1,23 @@
+{
+  "name": "inone-backend",
+  "version": "1.0.0",
+  "description": "TikTok-like video sharing backend",
+  "main": "api/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node api/index.js",
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.956.0",
+    "@aws-sdk/s3-request-presigner": "^3.956.0",
+    "@supabase/supabase-js": "^2.89.0",
+    "aws-sdk": "^2.1500.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

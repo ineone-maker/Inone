@@ -1,0 +1,30 @@
+name: inone
+description: "TikTok-like video sharing app"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  supabase_flutter: ^2.0.0
+  camera: ^0.10.0+4
+  video_player: ^2.7.0
+  path_provider: ^2.0.14
+  ffmpeg_kit_flutter_https_gpl: ^5.1.0
+  http: ^1.1.0
+  uuid: ^4.0.0
+  google_sign_in: ^6.2.0
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
