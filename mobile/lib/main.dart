@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
+import 'services/feed_bloc.dart';
+import 'widgets/video_feed.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +25,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
+        scaffoldBackgroundColor: Colors.black,
       ),
       home: const AuthScreen(),
     );
@@ -86,22 +90,10 @@ class _FeedScreenState extends State<FeedScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Inone Feed'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('Feed coming soon...'),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.video_camera_back),
-              label: const Text('Record & Upload'),
-            ),
-          ],
-        ),
+      backgroundColor: Colors.black,
+      body: ChangeNotifierProvider(
+        create: (_) => FeedBloc(),
+        child: VideoFeedWidget(),
       ),
     );
   }

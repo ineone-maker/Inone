@@ -1,0 +1,12 @@
+name = "inone-cdn"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# R2 binding
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "inone"
+
+# Environment variables
+[env.production]
+vars = { BUCKET_NAME = "inone" }

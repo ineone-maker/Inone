@@ -92,10 +92,13 @@ app.post('/upload/thumbnail', async (req, res) => {
 
 // ============== VIDEO ENDPOINTS ==============
 
-// 3. Create video metadata
+// 3. Create video metadata (with 480p fallback version)
 app.post('/videos', async (req, res) => {
   try {
     const { userId, videoId, caption, videoUrl, thumbUrl, duration } = req.body;
+    
+    // Create 480p fallback URL
+    const url480p = videoUrl.replace(/\.mp4$/, '_480p.mp4');
 
     const { data, error } = await supabase
       .from('videos')
@@ -104,6 +107,7 @@ app.post('/videos', async (req, res) => {
         user_id: userId,
         caption,
         video_url: videoUrl,
+        video_url_480p: url480p,
         thumb_url: thumbUrl,
         duration,
       })

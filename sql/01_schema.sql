@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.videos (
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   caption TEXT,
   video_url TEXT NOT NULL,
+  video_url_480p TEXT, -- Fallback 480p version for slow connections
   thumb_url TEXT NOT NULL,
   duration INTEGER NOT NULL, -- duration in milliseconds
   view_count INTEGER DEFAULT 0,
