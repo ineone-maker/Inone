@@ -35,6 +35,43 @@ const r2Client = new S3Client({
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
 });
 
+// LRU Cache for personalized feeds (5 min TTL, max 100 entries)
+class LRUCache {
+  constructor(maxSize = 100, ttl = 300000) { // 5 minutes TTL
+    this.maxSize = maxSize;
+    this.ttl = ttl;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    const entry = this.cache.get(key);
+    if (Date.now() - entry.timestamp > this.ttl) {
+      this.cache.delete(key);
+      return null;
+    }
+    // Move to end (most recently used)
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+    return entry.data;
+  }
+
+  set(key, value) {
+    if (this.cache.has(key)) this.cache.delete(key);
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+    this.cache.set(key, { data: value, timestamp: Date.now() });
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+const feedCache = new LRUCache(100, 300000); // 100 entries, 5 min TTL
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -126,26 +163,106 @@ app.post('/videos', async (req, res) => {
   }
 });
 
-// 4. Get feed (paginated)
+// 4. Get feed (personalized or global)
 app.get('/feed', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
     const offset = parseInt(req.query.offset) || 0;
+    const userId = req.query.user; // UUID of user requesting feed
+    const feedVersion = parseInt(req.query.v) || 1; // A/B test version
+    const cacheKey = `feed:${userId}:${feedVersion}:${offset}`;
 
-    const { data, error, count } = await supabase
-      .from('videos')
-      .select('*, users:user_id(id, username, display_name, avatar_url)', { count: 'exact' })
-      .order('created_at', { ascending: false })
+    // Check cache
+    const cached = feedCache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // If no userId, return global top feed
+    if (!userId) {
+      const { data, error, count } = await supabase
+        .from('feed_scores')
+        .select('*, users:user_id(id, username, display_name, avatar_url)', { count: 'exact' })
+        .range(offset, offset + limit - 1);
+
+      if (error) throw error;
+
+      const response = {
+        videos: data,
+        total: count,
+        limit,
+        offset,
+        personalized: false,
+      };
+
+      feedCache.set(cacheKey, response);
+      return res.json(response);
+    }
+
+    // Personalized feed: exclude videos user has already interacted with
+    // Cold-start: if user has < 5 interactions, show global top feed
+    const { count: interactionCount } = await supabase
+      .from('interactions')
+      .select('id', { count: 'exact' })
+      .eq('user_id', userId);
+
+    if ((interactionCount || 0) < 5) {
+      // Cold-start: show global top videos
+      const { data, error, count } = await supabase
+        .from('feed_scores')
+        .select('*, users:user_id(id, username, display_name, avatar_url)', { count: 'exact' })
+        .range(offset, offset + limit - 1);
+
+      if (error) throw error;
+
+      const response = {
+        videos: data,
+        total: count,
+        limit,
+        offset,
+        personalized: false,
+        coldStart: true,
+      };
+
+      feedCache.set(cacheKey, response);
+      return res.json(response);
+    }
+
+    // Get videos user has already seen
+    const { data: seenVideos, error: seenError } = await supabase
+      .from('interactions')
+      .select('video_id')
+      .eq('user_id', userId);
+
+    if (seenError) throw seenError;
+
+    const seenVideoIds = (seenVideos || []).map(v => v.video_id);
+
+    // Get personalized feed excluding seen videos
+    let query = supabase
+      .from('feed_scores')
+      .select('*, users:user_id(id, username, display_name, avatar_url)', { count: 'exact' });
+
+    if (seenVideoIds.length > 0) {
+      query = query.not('id', 'in', `(${seenVideoIds.join(',')})`);
+    }
+
+    const { data, error, count } = await query
       .range(offset, offset + limit - 1);
 
     if (error) throw error;
 
-    res.json({
+    const response = {
       videos: data,
       total: count,
       limit,
       offset,
-    });
+      personalized: true,
+      feedVersion,
+    };
+
+    feedCache.set(cacheKey, response);
+    res.json(response);
   } catch (error) {
     console.error('Feed error:', error);
     res.status(500).json({ error: error.message });
@@ -308,7 +425,7 @@ app.get('/users/:id', async (req, res) => {
 app.put('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { displayName, bio, avatarUrl } = req.body;
+    const { displayName, bio, avatarUrl, feedVersion } = req.body;
 
     const { data, error } = await supabase
       .from('users')
@@ -316,6 +433,7 @@ app.put('/users/:id', async (req, res) => {
         display_name: displayName,
         bio,
         avatar_url: avatarUrl,
+        feed_version: feedVersion || 1, // A/B testing
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)

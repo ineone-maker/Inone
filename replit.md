@@ -3,20 +3,22 @@
 ## Overview
 Inone is a complete full-stack video sharing application with:
 - **Flutter mobile app** - Record, compress, and share short videos (15 sec max, 720×1280)
-- **Node.js/Express backend** - API for video management, feeds, interactions, and analytics
+- **Node.js/Express backend** - API for video management, personalized feeds, analytics
 - **Supabase database** - PostgreSQL with RLS, auth, and analytics tracking
 - **Cloudflare R2** - Global object storage for videos and thumbnails
-- **Cloudflare Worker CDN** - Serve clips with optimal caching and global distribution
+- **Cloudflare Worker CDN** - Serve clips with optimal caching
 - **GitHub Actions CI/CD** - Auto-build APK on every commit to main
-- **Analytics Engine** - Event tracking, batch processing, privacy controls, and daily rollups
+- **Personalized Feed Engine** - Collaborative filtering with scoring algorithm
+- **Analytics Engine** - Event tracking, batch processing, privacy controls, rollups
 
 ## Current State
 ✓ Backend API running on port 3000
-✓ Supabase database schema configured with analytics tables
-✓ Flutter mobile app with analytics event tracking
-✓ Analytics batch sender with idempotency
-✓ Privacy mode (do_not_track) implemented
-✓ Daily rollup GitHub Action configured
+✓ Supabase database schema with personalized feed support
+✓ Flutter mobile app with analytics and feed management
+✓ LRU cache layer for feed performance (100 entries, 5 min TTL)
+✓ Personalized feed ranking with engagement metrics
+✓ Cold-start handling for new users
+✓ A/B testing support with feed_version parameter
 ✓ All environment variables securely stored
 
 ## Project Architecture
@@ -27,165 +29,146 @@ Inone is a complete full-stack video sharing application with:
 **Key Endpoints:**
 - `POST /upload/presign` - Get presigned URL for R2 video upload
 - `POST /upload/thumbnail` - Upload video thumbnail
-- `POST /videos` - Create video metadata (with 480p fallback URL)
-- `GET /feed?limit=20&offset=0` - Paginated video feed (20 videos per page)
-- `GET /videos/:id` - Get video details with comments/likes
+- `POST /videos` - Create video metadata
+- **`GET /feed?user=UUID&v=1`** - Personalized or global feed (with LRU cache)
+- `GET /videos/:id` - Get video details
 - `POST /videos/:id/like` - Like/unlike video
 - `GET /videos/:id/comments` - Get video comments
 - `POST /videos/:id/comments` - Post comment
 - `POST /videos/:id/view` - Track video view
-- `GET /users/:id` - Get user profile with video count
-- `PUT /users/:id` - Update user profile
-- **`POST /interactions`** - Bulk insert analytics events (with privacy check)
-- **`GET /interactions/settings/:userId`** - Get privacy settings
-- **`PUT /interactions/settings/:userId`** - Update privacy settings
-
-**Dependencies:**
-- express, cors, dotenv
-- @supabase/supabase-js (database)
-- @aws-sdk/client-s3, @aws-sdk/s3-request-presigner (R2)
-
-### Database (Supabase PostgreSQL)
-**Schema:** `sql/01_schema.sql` + `sql/02_rollup.sql`
-
-**Tables:**
-- `users` - User profiles (username, display_name, avatar_url, bio)
-- `videos` - Video metadata (video_url, video_url_480p fallback, thumb_url, duration, caption)
-- `likes` - Video likes with unique constraint (user_id, video_id)
-- `comments` - Video comments with timestamps
-- `views` - Video view tracking with unique constraint
-- **`interactions`** - Analytics events (imp, w50, skip, like) with idempotency via event_id
-- **`settings`** - User privacy settings (do_not_track flag)
-- **`video_scores`** - Materialized view with engagement metrics (impressions, watches, skips, likes, engagement rate)
+- `GET /users/:id` - Get user profile
+- `PUT /users/:id` - Update user profile (supports feed_version)
+- `POST /interactions` - Bulk insert analytics events
+- `GET /interactions/settings/:userId` - Get privacy settings
+- `PUT /interactions/settings/:userId` - Update privacy settings
 
 **Features:**
-- Row Level Security (RLS) enabled on all tables
-- Foreign key relationships with cascade delete
-- Performance indexes on frequently queried columns
-- Auth.users integration for user management
-- Event idempotency via UUID event_id
+- LRU cache for personalized feeds (100 entries max, 5 min TTL)
+- A/B testing with feed_version parameter
+- Cold-start detection and global top feed for new users
+- Seen video filtering for personalized feeds
+
+### Database (Supabase PostgreSQL)
+**Schema:** `sql/01_schema.sql` + `sql/02_rollup.sql` + `sql/03_score.sql`
+
+**Tables:**
+- `users` - User profiles with feed_version for A/B testing
+- `videos` - Video metadata (with ai_caption field for future use)
+- `likes`, `comments`, `views` - Social features
+- `interactions` - Analytics events with idempotency
+- `settings` - Privacy settings (do_not_track)
+- **`feed_scores`** - Materialized view with engagement scoring
+
+**Materialized Views:**
+- **`feed_scores`** - Ranked videos by engagement score (formula: 3×likes + 1×w50 - 0.5×skips + recency_bonus)
+- **`video_scores`** - Daily engagement metrics from rollup
+
+**Scoring Algorithm:**
+```
+score = (likes * 3) + (watched_50 * 1) - (skips * 0.5) + recency_bonus
+- Likes heavily weighted (×3)
+- Watched 50% moderately weighted (×1)
+- Skips penalized (×-0.5)
+- Recent videos get bonus
+- Result: Highest quality content ranked first
+```
 
 ### Mobile App (Flutter)
 **Directory:** `mobile/`
 
-**Key Components:**
-- `lib/main.dart` - Auth with Google OAuth, main feed UI
-- `lib/services/feed_bloc.dart` - Feed state management with pagination
-- `lib/services/video_service.dart` - API client with retry logic
-- **`lib/services/analytics_service.dart`** - Event tracking with batch sending
-- `lib/widgets/video_feed.dart` - PageView feed with preloading + analytics
-
-**Advanced Features:**
-
-1. **Pagination** - ScrollListener detects when user reaches end of feed, auto-loads next 20 videos
-2. **Video Preloading** - Keeps 3 VideoPlayerController instances in memory
-3. **Memory Management** - Auto-disposes oldest controller when scrolling away
-4. **Offline Support** - CachedNetworkImage for thumbnails with fallback
-5. **Bandwidth Guard** - Mobile logs CF-Cache-Status header to track CDN hits
-6. **Fallback Quality** - On slow connections, mobile switches to 480p version (video_url_480p)
-7. **Retry Logic** - Exponential backoff for failed uploads (max 3 attempts)
-
-**Analytics Features:**
-
-8. **Event Tracking** - Tracks: `imp` (impression), `w50` (watched 50%), `skip` (< 2s), `like` (button tap)
-9. **Batch Sending** - Queues events, flushes every 5 seconds or 10 items
-10. **Idempotency** - Each event has UUID; server ignores duplicates
-11. **Privacy Mode** - User can enable do_not_track; if enabled, no events sent to backend
-
-**UI Features:**
-- Vertical PageView for smooth scrolling
-- Video action buttons (like, comment, share)
-- User info overlay (username, caption)
-- Play button overlay
-- Like/comment count display
-
-### Cloudflare Worker CDN
-**File:** `worker/src/index.js` & `worker/wrangler.toml`
+**Components:**
+- `lib/main.dart` - Auth and feed UI
+- `lib/services/feed_bloc.dart` - Feed state with pagination
+- `lib/services/video_service.dart` - API client with retry
+- `lib/services/analytics_service.dart` - Event tracking with batch sending
+- `lib/widgets/video_feed.dart` - PageView with analytics
+- `lib/widgets/caption_generator.dart` - AI caption support (optional)
 
 **Features:**
-- Serves videos and thumbnails from R2 via global CDN
-- Cache headers: `public, max-age=3600, immutable`
-- Returns `CF-Cache-Status` header (HIT/MISS/EXPIRED)
-- CORS enabled for mobile app requests
-- Automatic cache invalidation after 1 hour
+- Pagination with auto-load at end of list
+- Video preloading (3 controllers in memory)
+- Event tracking (imp, w50, skip, like) with UUID idempotency
+- Batch event sending (5s or 10 items)
+- Privacy mode support
+- Offline thumbnail support
+- Fallback to 480p on slow connections
+
+### Feed Ranking System
+
+**Personalized Feed (logged-in users with 5+ interactions):**
+1. Query `feed_scores` materialized view
+2. Filter out videos user has already seen (from interactions table)
+3. Return top 20 ranked by score descending
+4. Cached for 5 minutes (LRU cache)
+
+**Global Top Feed (new users < 5 interactions):**
+1. Show top 50 videos by score
+2. No filtering
+3. Continues until user builds history
+
+**Feed Versions (A/B Testing):**
+- Users have `feed_version` column (default=1)
+- Mobile sends `?v=1` parameter
+- Deploy new algorithms without breaking old builds
+- Gradual rollout capability
+
+### Cloudflare Worker CDN
+**File:** `worker/src/index.js`
+
+**Features:**
+- Serves R2 videos/thumbnails with 1hr cache
+- Returns CF-Cache-Status header
+- CORS enabled for mobile
+- Global edge distribution
 
 ### Analytics Pipeline
-
 **Event Flow:**
-1. Mobile app tracks events: `imp`, `w50`, `skip`, `like`
-2. Events queued in-memory with UUID for idempotency
-3. Batch sent to `POST /interactions` every 5s or 10 items
-4. Server checks user privacy settings before inserting
-5. Events stored in `interactions` table
-6. Daily rollup (2 AM UTC) runs `sql/02_rollup.sql`
-7. Materialized view `video_scores` updated with engagement metrics
+1. Mobile tracks: imp, w50, skip, like
+2. Queue in-memory with UUID
+3. Batch send every 5s or 10 items
+4. Server validates user privacy settings
+5. Store in interactions table
+6. Daily rollup updates materialized views
 
-**Metrics Calculated:**
-- Impression count - How many users saw video
-- Watched 50% - How many watched half the video
-- Skip count - How many watched < 2 seconds
-- Like count - How many liked the video
-- Engagement rate - % of impressions that led to engagement
+**Privacy:**
+- Users can enable do_not_track
+- Server checks before inserting events
+- No tracking if privacy enabled
 
 ### CI/CD Pipeline
-**Files:** 
-- `.github/workflows/build-apk.yml` - Mobile APK build on every push to main
-- `.github/workflows/rollup-stats.yml` - Daily rollup at 2 AM UTC
-
-**APK Build:**
-1. Checkout code
-2. Setup Java & Flutter SDK (3.16.0)
-3. Get dependencies (`flutter pub get`)
-4. Build APK (`flutter build apk --release`)
-5. Upload artifact (30-day retention)
-
-**Daily Rollup:**
-1. Runs at 2 AM UTC every day
-2. Executes `sql/02_rollup.sql`
-3. Refreshes materialized view `video_scores`
-4. Updates video counts from interactions
+**Files:**
+- `.github/workflows/build-apk.yml` - APK build on push to main
+- `.github/workflows/rollup-stats.yml` - Daily 2 AM UTC rollup
 
 ## Environment Variables
-All credentials are securely stored in Replit:
-- `SUPABASE_URL` - Supabase project URL
-- `SUPABASE_ANON_KEY` - Public anon key for mobile app
-- `SUPABASE_SERVICE_ROLE` - Backend-only service role
-- `R2_ACCOUNT_ID` - Cloudflare R2 account ID
-- `R2_ACCESS_KEY` - R2 API access key
-- `R2_SECRET_KEY` - R2 API secret key
-- `R2_BUCKET` - Bucket name: "inone"
-- `RENDER_GIT_REPO` - GitHub repo URL
+All securely stored:
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE`
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET`
+- `RENDER_GIT_REPO`
 
 ## Development Setup
 
-### Backend
+**Backend:**
 ```bash
 npm install
 node api/index.js
 ```
-Backend runs on `http://localhost:3000`
 
-### Mobile
+**Mobile:**
 ```bash
 cd mobile
 flutter pub get
-flutter run
+flutter build apk --release
 ```
 
-### Database
-Run the schema SQL in Supabase SQL editor:
-1. Go to Supabase Dashboard
-2. SQL Editor
-3. Copy contents of `sql/01_schema.sql`
-4. Execute
-5. Then copy `sql/02_rollup.sql` and execute
+**Database:**
+1. Run `sql/01_schema.sql` in Supabase
+2. Run `sql/02_rollup.sql` for analytics
+3. Run `sql/03_score.sql` for feed scoring
 
-### Worker
+**Worker:**
 ```bash
-cd worker
-npm install -g wrangler
-wrangler login
-wrangler deploy
+cd worker && wrangler deploy
 ```
 
 ## Workflow Configuration
@@ -196,80 +179,55 @@ wrangler deploy
 
 ## How It Works
 
-### Video Upload Flow
-1. **User records** video in Flutter app (15 sec, 720×1280)
-2. **App requests presigned URL** from backend
-3. **Mobile compresses** video with FFmpeg and creates thumbnail
-4. **Direct upload to R2** using presigned URL
-5. **Thumbnail upload** to R2 (`/thumbs/UUID.jpg`)
-6. **Metadata submission** - App sends `POST /videos` with video/thumb URLs
-7. **Backend stores** metadata in Supabase
+### Feed Retrieval Flow
+1. **No user** → GET /feed → Global top 50 videos
+2. **New user** (< 5 interactions) → GET /feed?user=UUID → Global top 50
+3. **Active user** (5+ interactions) → GET /feed?user=UUID → Personalized feed
+   - Query feed_scores materialized view
+   - Filter out seen videos
+   - Return ranked by engagement score
+   - Cached for 5 minutes
 
-### Feed Display Flow
-1. **User opens app** → `GET /feed` loads 20 videos
-2. **Videos display** via PageView (vertical scroll)
-3. **Auto-play** when video enters viewport
-4. **Analytics tracked** → Events queued (imp, w50, skip, like)
-5. **View tracked** → `POST /videos/:id/view`
-6. **Pagination** - When user scrolls to end, load next 20
-7. **Preloading** - Keep 3 controllers in memory for smooth playback
-8. **Batch flush** - Events sent to `POST /interactions` every 5s or 10 items
+### Demo: Different Feeds
+- User A likes videos about fitness → feed prioritizes fitness content
+- User B likes music videos → feed prioritizes music
+- Same global top feed until 5 interactions
+- Different personalized feeds after that
 
-### Analytics Processing
-1. **Mobile tracks events** - Impression, 50% watched, skip, like
-2. **Batch queue** - Events queued with UUID for idempotency
-3. **Privacy check** - Server verifies user didn't enable do_not_track
-4. **Server insert** - Events stored in `interactions` table
-5. **Daily rollup** - GitHub Action runs at 2 AM UTC
-6. **Metrics update** - Materialized view `video_scores` refreshed
-7. **Dashboard query** - View engagement rate: `engagement_count / impression_count * 100`
-
-## Bandwidth Optimization
-- **CDN Serving**: Videos served through Cloudflare Worker
-- **Cache Headers**: 1 hour immutable cache for already-watched clips
-- **Fallback Quality**: Mobile switches to 480p on slow connections
-- **Bandwidth Guard**: CF-Cache-Status header logged to track cache effectiveness
-- **Expected CDN Hit Rate**: >90% on typical usage patterns
-
-## Privacy & Data Protection
-- **Do Not Track** - Users can enable privacy mode to disable event tracking
-- **Server-side check** - Backend respects user settings before inserting events
-- **Idempotent events** - UUID prevents duplicate counting
-- **RLS enabled** - Users can only read/write their own settings and events
+### Performance Optimizations
+- **LRU Cache**: Last 100 personalized feeds cached for 5 min
+- **Materialized View**: Pre-calculated scores, fast queries
+- **Indexing**: Scores indexed for fast sorting
+- **Pagination**: Load 20 at a time, avoid large result sets
+- **Seen filtering**: Only exclude videos user interacted with
 
 ## Next Steps
 
 1. **Deploy Supabase Schema**
-   - Copy `sql/01_schema.sql` and `sql/02_rollup.sql` to Supabase SQL editor and execute both
+   - Execute `sql/01_schema.sql`, `sql/02_rollup.sql`, `sql/03_score.sql`
 
-2. **Deploy Cloudflare Worker**
-   - `cd worker && wrangler deploy`
-   - Add custom domain (optional): Point `cdn.yourdomain.com` to Worker
+2. **Test Feed Ranking**
+   - Create 2 test users
+   - User A: Like fitness videos
+   - User B: Like music videos
+   - Verify different feeds returned
 
-3. **Build & Deploy Mobile App**
-   - Local: `cd mobile && flutter pub get && flutter build apk --release`
-   - Auto-build: Push to GitHub → GitHub Actions builds APK automatically
+3. **Deploy Backend**
+   - Click "Publish" in Replit
+   - Update mobile app with backend URL
 
-4. **Deploy Backend**
-   - Click "Publish" button in Replit to get public URL
-   - Update backend URL in mobile app config
+4. **Build APK**
+   - `cd mobile && flutter build apk --release`
 
-5. **Update GitHub Actions Secrets**
-   - Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE` to GitHub repo secrets for daily rollup
-
-6. **Test End-to-End**
-   - Record video on Android device
-   - Verify upload to R2
-   - Check video appears in feed
-   - Like 3 videos
-   - Verify `video_scores` materialized view updated after next rollup
-   - Check analytics in Supabase dashboard
+5. **GitHub Secrets**
+   - Add SUPABASE_URL and SUPABASE_SERVICE_ROLE for rollups
 
 ## Recent Changes
-- December 22, 2025: Complete full-stack implementation with:
-  - Complete analytics engine (event tracking, batch sending, idempotency)
-  - Privacy controls (do_not_track setting)
-  - Daily rollup script with materialized view
-  - GitHub Action for scheduled rollup
-  - Mobile event listeners and batch sender
-  - All endpoints and database tables configured
+- December 22, 2025: Complete personalized feed system with:
+  - Feed scoring materialized view with engagement algorithm
+  - Personalized feed ranking by score
+  - LRU cache layer for performance (100 entries, 5 min TTL)
+  - A/B testing with feed_version parameter
+  - Cold-start handling (global top feed for <5 interactions)
+  - Seen video filtering for personalized feeds
+  - Caption generation support structure (optional)

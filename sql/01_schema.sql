@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   display_name TEXT,
   avatar_url TEXT,
   bio TEXT,
+  feed_version INT DEFAULT 1, -- A/B testing: 1=collaborative, 2=fresh, etc.
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS public.videos (
   video_url_480p TEXT, -- Fallback 480p version for slow connections
   thumb_url TEXT NOT NULL,
   duration INTEGER NOT NULL, -- duration in milliseconds
+  ai_caption TEXT, -- Auto-generated caption from Hugging Face
   view_count INTEGER DEFAULT 0,
   like_count INTEGER DEFAULT 0,
   comment_count INTEGER DEFAULT 0,
