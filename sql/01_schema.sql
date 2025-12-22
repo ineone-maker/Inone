@@ -55,6 +55,24 @@ CREATE TABLE IF NOT EXISTS public.views (
   UNIQUE(user_id, video_id)
 );
 
+-- Interactions table (analytics events)
+CREATE TABLE IF NOT EXISTS public.interactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL UNIQUE, -- For idempotency
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  video_id UUID NOT NULL REFERENCES public.videos(id) ON DELETE CASCADE,
+  event TEXT NOT NULL, -- 'imp' (impression), 'w50' (watched 50%), 'skip' (< 2s), 'like'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Settings table
+CREATE TABLE IF NOT EXISTS public.settings (
+  user_id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  do_not_track BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_videos_user_id ON public.videos(user_id);
 CREATE INDEX IF NOT EXISTS idx_videos_created_at ON public.videos(created_at DESC);
@@ -62,6 +80,9 @@ CREATE INDEX IF NOT EXISTS idx_likes_user_id ON public.likes(user_id);
 CREATE INDEX IF NOT EXISTS idx_likes_video_id ON public.likes(video_id);
 CREATE INDEX IF NOT EXISTS idx_comments_video_id ON public.comments(video_id);
 CREATE INDEX IF NOT EXISTS idx_views_video_id ON public.views(video_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_video_id ON public.interactions(video_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_created_at ON public.interactions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_interactions_event ON public.interactions(event);
 
 -- Enable RLS (Row Level Security)
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -69,6 +90,8 @@ ALTER TABLE public.videos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.interactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for users table
 CREATE POLICY "Users are viewable by everyone" ON public.users
@@ -118,4 +141,18 @@ CREATE POLICY "Views are viewable by everyone" ON public.views
   FOR SELECT USING (true);
 
 CREATE POLICY "Users can insert their own views" ON public.views
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- RLS Policies for interactions
+CREATE POLICY "Users can insert their own interactions" ON public.interactions
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- RLS Policies for settings
+CREATE POLICY "Users can read their own settings" ON public.settings
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own settings" ON public.settings
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own settings" ON public.settings
   FOR INSERT WITH CHECK (auth.uid() = user_id);

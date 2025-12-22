@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import '../services/feed_bloc.dart';
+import '../services/analytics_service.dart';
 
 class VideoFeedWidget extends StatefulWidget {
   const VideoFeedWidget({Key? key}) : super(key: key);
@@ -46,12 +48,14 @@ class _VideoFeedWidgetState extends State<VideoFeedWidget> {
           );
         }
 
+        // Initialize analytics service (get userId from Supabase auth)
+        final userId = 'user-id'; // Replace with actual auth user ID
+
         return PageView.builder(
           controller: _pageController,
           scrollDirection: Axis.vertical,
           onPageChanged: (index) {
             setState(() => _currentIndex = index);
-            // Track view when video comes into view
             feedBloc.trackView(feedBloc.videos[index].id);
           },
           itemCount: feedBloc.videos.length + (feedBloc.hasMore ? 1 : 0),
@@ -67,6 +71,7 @@ class _VideoFeedWidgetState extends State<VideoFeedWidget> {
               video: video,
               isActive: index == _currentIndex,
               feedBloc: feedBloc,
+              analyticsService: AnalyticsService(userId: userId),
             );
           },
         );
@@ -79,11 +84,13 @@ class VideoCard extends StatefulWidget {
   final VideoItem video;
   final bool isActive;
   final FeedBloc feedBloc;
+  final AnalyticsService analyticsService;
 
   const VideoCard({
     required this.video,
     required this.isActive,
     required this.feedBloc,
+    required this.analyticsService,
     Key? key,
   }) : super(key: key);
 
@@ -95,6 +102,9 @@ class _VideoCardState extends State<VideoCard> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _showPlayButton = true;
+  bool _impressionTracked = false;
+  bool _watched50Tracked = false;
+  bool _skipTracked = false;
 
   @override
   void initState() {
@@ -128,8 +138,45 @@ class _VideoCardState extends State<VideoCard> {
     if (widget.isActive && _controller != null && _isInitialized) {
       _controller!.play();
       setState(() => _showPlayButton = false);
+      _trackImpression();
+      _startPositionListener();
     } else if (!widget.isActive && _controller != null && _isInitialized) {
       _controller!.pause();
+      _checkForSkip();
+    }
+  }
+
+  void _trackImpression() {
+    if (!_impressionTracked) {
+      widget.analyticsService.trackImpression(widget.video.id);
+      _impressionTracked = true;
+    }
+  }
+
+  void _startPositionListener() {
+    if (_controller == null) return;
+    
+    // Track position changes to detect 50% watched
+    _controller!.addListener(() {
+      if (!_watched50Tracked && _controller != null && _controller!.value.isInitialized) {
+        final position = _controller!.value.position.inMilliseconds;
+        final duration = _controller!.value.duration.inMilliseconds;
+        
+        if (duration > 0 && position >= (duration * 0.5)) {
+          widget.analyticsService.trackWatched50(widget.video.id);
+          _watched50Tracked = true;
+        }
+      }
+    });
+  }
+
+  void _checkForSkip() {
+    if (!_skipTracked && _controller != null && _controller!.value.isInitialized) {
+      final position = _controller!.value.position.inMilliseconds;
+      if (position < 2000) { // Less than 2 seconds watched
+        widget.analyticsService.trackSkip(widget.video.id);
+        _skipTracked = true;
+      }
     }
   }
 
@@ -230,9 +277,14 @@ class _VideoCardState extends State<VideoCard> {
           right: 16,
           child: Column(
             children: [
-              _ActionButton(
-                icon: Icons.favorite,
-                label: _formatCount(widget.video.likeCount),
+              GestureDetector(
+                onTap: () {
+                  widget.analyticsService.trackLike(widget.video.id);
+                },
+                child: _ActionButton(
+                  icon: Icons.favorite,
+                  label: _formatCount(widget.video.likeCount),
+                ),
               ),
               SizedBox(height: 16),
               _ActionButton(
