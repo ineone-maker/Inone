@@ -22,6 +22,10 @@ FROM public.videos v
 LEFT JOIN public.interactions i ON v.id = i.video_id
 GROUP BY v.id, v.caption, v.created_at;
 
+-- Create unique index on materialized view (required for concurrent refresh)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_video_scores_id 
+  ON public.video_scores(id);
+
 -- Create index on materialized view for faster queries
 CREATE INDEX IF NOT EXISTS idx_video_scores_engagement_rate 
   ON public.video_scores(engagement_rate DESC);

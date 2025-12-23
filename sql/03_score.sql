@@ -30,6 +30,10 @@ LEFT JOIN public.interactions i ON v.id = i.video_id
 GROUP BY v.id, v.user_id, v.caption, v.video_url, v.video_url_480p, v.thumb_url, v.duration, v.created_at
 ORDER BY score DESC;
 
+-- Create unique index on materialized view (required for concurrent refresh)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_scores_id 
+  ON public.feed_scores(id);
+
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_feed_scores_score ON public.feed_scores(score DESC);
 CREATE INDEX IF NOT EXISTS idx_feed_scores_created_at ON public.feed_scores(created_at DESC);
