@@ -18,11 +18,11 @@ SELECT
   COUNT(DISTINCT CASE WHEN i.event = 'like' THEN i.user_id END)::INT as like_count,
   -- Scoring formula: (likes * 3) + (w50 * 1) - (skips * 0.5) + recency bonus
   ROUND(
-    (COUNT(DISTINCT CASE WHEN i.event = 'like' THEN i.user_id END) * 3.0) +
+    ((COUNT(DISTINCT CASE WHEN i.event = 'like' THEN i.user_id END) * 3.0) +
     (COUNT(DISTINCT CASE WHEN i.event = 'w50' THEN i.user_id END) * 1.0) -
     (COUNT(DISTINCT CASE WHEN i.event = 'skip' THEN i.user_id END) * 0.5) +
     -- Recency bonus: newer videos get higher scores
-    (EXTRACT(EPOCH FROM (NOW() - v.created_at)) / 86400.0 / -10.0)::FLOAT,
+    (EXTRACT(EPOCH FROM (NOW() - v.created_at)) / 86400.0 / -10.0)::FLOAT)::NUMERIC,
     2
   )::FLOAT as score
 FROM public.videos v

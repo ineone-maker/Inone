@@ -12,8 +12,8 @@ SELECT
   COUNT(DISTINCT CASE WHEN i.event = 'like' THEN i.user_id END) as like_count,
   COUNT(DISTINCT CASE WHEN i.event IN ('imp', 'w50', 'like') THEN i.user_id END) as engagement_count,
   ROUND(
-    COUNT(DISTINCT CASE WHEN i.event IN ('imp', 'w50', 'like') THEN i.user_id END)::FLOAT / 
-    NULLIF(COUNT(DISTINCT CASE WHEN i.event = 'imp' THEN i.user_id END), 0) * 100,
+    (COUNT(DISTINCT CASE WHEN i.event IN ('imp', 'w50', 'like') THEN i.user_id END)::FLOAT / 
+    NULLIF(COUNT(DISTINCT CASE WHEN i.event = 'imp' THEN i.user_id END), 0) * 100)::NUMERIC,
     2
   ) as engagement_rate,
   MAX(i.created_at) as last_interaction,
