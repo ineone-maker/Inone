@@ -1,0 +1,30 @@
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
+
+// Inject namespace into ffmpeg-kit 5.1 / 6.x
+gradle.projectsEvaluated {
+    subprojects.forEach { subproject ->
+        if (subproject.plugins.hasPlugin("com.android.library") &&
+            !subproject.android.hasProperty("namespace")) {
+            subproject.android.namespace = "com.arthenica.ffmpegkit.flutter"
+        }
+    }
+}
